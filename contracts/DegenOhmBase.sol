@@ -16,8 +16,9 @@ contract DegenOHM is ERC20("Low Risk Degen OHM", "LR_dOHM", 18) {
     struct Receipt {
         uint lockupAmount;              // amount locked, and owed to depositor
         uint releaseTimestamp;          // creation time + 5 days
+        bool paid;                      // if user has withdrawn funds or not
     }
-    
+
 
     ///////////////////////  State  ///////////////////////
 
@@ -55,6 +56,7 @@ contract DegenOHM is ERC20("Low Risk Degen OHM", "LR_dOHM", 18) {
         RFV_BIPS = newRFV;
     }
 
+    // TODO add pausable
 
     /////////////////////// Public ///////////////////////
 
@@ -63,7 +65,7 @@ contract DegenOHM is ERC20("Low Risk Degen OHM", "LR_dOHM", 18) {
      *  @param to reciepient of payout.
      *  @param lockupAmount amount to be locked.
      */
-    function lock(
+    function deposit(
         address to,
         uint lockupAmount
     ) external {
@@ -84,6 +86,28 @@ contract DegenOHM is ERC20("Low Risk Degen OHM", "LR_dOHM", 18) {
         uint payoutAmount = lockupAmount * RFV_BIPS / DIVISOR;
         // transfer payout
         wOHM.transfer( to, IwOHM( address( wOHM ) ).wOHMValue( payoutAmount ) );
+    }
+
+    // withdraw deposited sOHM after vesting is complete
+    function withdraw(
+        uint receiptID,
+        address to
+    ) external {
+        // interface users receipts
+        Receipt[] storage receipts = sellerReceipts[ msg.sender ];
+        // interface specific receipt
+        Receipt storage receipt = receipts[ receiptID ];
+        // make sure the receipt hasn't already been paid
+        require(receipt.paid == false, "already paid");
+        // make sure the receipts fully vested
+        require(receipt.releaseTimestamp <= block.timestamp, "not fully vested");
+        // set it as paid
+        receipt.paid = true;
+        // decrease debt
+        totalDebt -= receipt.lockupAmount;
+        // return deposited funds
+        sOHM.transfer(to, receipt.lockupAmount);
+
     }
     
     // provide your wOHM and receive LP tokens
