@@ -1,43 +1,73 @@
 // SPDX-License-Identifier: WTFPL
 pragma solidity =0.8.9;
 
+// Rari Capital low gas ERC20
 import "https://github.com/Rari-Capital/solmate/blob/38b518cf7a66868111bac15f99559108b1e12dba/src/erc20/ERC20.sol";
 
 interface IwOHM {
     function wrapFromsOHM( uint _amount ) external returns ( uint );
-    function sOHMValue( uint _amount ) external view returns ( uint );
     function wOHMValue( uint _amount ) external view returns ( uint );
 }
 
-contract DegenOHM is ERC20("Low Risk Degen OHM", "LR-DOHM", 18) {
-    
+contract DegenOHM is ERC20("Low Risk Degen OHM", "LR_dOHM", 18) {
+
+    /////////////////////// Structs ///////////////////////
+
     struct Receipt {
-        uint lockupAmount;     // amount locked, and owed to depositor
-        uint releaseTimestamp; // creation time + 5 days
+        uint lockupAmount;              // amount locked, and owed to depositor
+        uint releaseTimestamp;          // creation time + 5 days
     }
     
-    address public admin;
+
+    ///////////////////////  State  ///////////////////////
+
+    address public admin;               // regularly updates RFV.
     
-    ERC20 public sOHM;
-    ERC20 public wOHM;
+    ERC20 public sOHM;                  // toke sold at a discount.
+
+    ERC20 public wOHM;                  // token deposited/earned by LPs.
     
-    uint public totalDebt;
+    uint public totalDebt;              // total amount of sOHM owed back to interest sellers.
     
-    uint public RFV_BIPS = 3000; // 3.0 %
+    uint public RFV_BIPS = 3000;        // 3.0 %
+
     uint public constant DIVISOR = 1e4; // 10,000
     
-    mapping( address => Receipt[] ) public sellerReceipts;
-    mapping( uint => mapping ( address => uint ) ) public userShares;
+    mapping( address => Receipt[] ) public sellerReceipts;  
+
+
+    ///////////////////////  Policy  ///////////////////////
+
+    // set admin, admin only
+    function set_Admin(
+        address newAdmin
+    ) external {
+        require(msg.sender == admin);
+        admin = newAdmin;
+    }
     
-    // lockup sOHM for 5 days, subsequently selling your accrued 
-    // interest at a discount, with the benefit of immediiate payout
+    // set risk free value, admin only
+    function set_RFV(
+        uint newRFV
+    ) external {
+        require(msg.sender == admin);
+        require(newRFV <= DIVISOR);
+        RFV_BIPS = newRFV;
+    }
+
+
+    /////////////////////// Public ///////////////////////
+
+    /*
+     *  Sell the next 5 days of sOHM interest to the pool at a discount.
+     *  @param to reciepient of payout.
+     *  @param lockupAmount amount to be locked.
+     */
     function lock(
         address to,
-        uint lockupAmount,
-        uint pid 
+        uint lockupAmount
     ) external {
         accrue();
-        require(pid <= 3, "!pid" );
         // interface users receipts
         Receipt[] storage receipts = sellerReceipts[ msg.sender ];
         // interface next available index
@@ -87,6 +117,8 @@ contract DegenOHM is ERC20("Low Risk Degen OHM", "LR-DOHM", 18) {
         }
     }
     
+    ///////////////////////  View  ///////////////////////
+
     // amount of sOHM that can currently be accrued
     function pendingAccrual() public view returns ( uint ) {
         if ( sOHM.balanceOf( address( this ) ) > totalDebt ) {
@@ -110,22 +142,5 @@ contract DegenOHM is ERC20("Low Risk Degen OHM", "LR-DOHM", 18) {
     ) public view returns ( uint ) {
         if ( totalSupply == 0 ) return amountIn;
         return amountIn * totalSupply / wOHM.balanceOf( address( this ) );
-    }
-    
-    // set admin, admin only
-    function set_Admin(
-        address newAdmin
-    ) external {
-        require(msg.sender == admin);
-        admin = newAdmin;
-    }
-    
-    // set risk free value, admin only
-    function set_RFV(
-        uint newRFV
-    ) external {
-        require(msg.sender == admin);
-        require(newRFV <= DIVISOR);
-        RFV_BIPS = newRFV;
     }
 }
