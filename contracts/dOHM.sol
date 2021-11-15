@@ -2,9 +2,12 @@
 pragma solidity >=0.8.0;
 
 import "./interfaces/IwOHM.sol";
+import "./interfaces/IStaking.sol";
 
 import "./types/LowGasERC20.sol";
 
+// consumers - take out a loan that pays itself off
+// lps - lend out wOHM to earn interest
 contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
 
     /////////////////////// Events ///////////////////////
@@ -29,16 +32,6 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
 
 
     ///////////////////////  State  ///////////////////////
-
-    IStaking public staking;
-
-    ERC20 public sOHM;                      // toke sold at a discount.
-
-    ERC20 public wOHM;                      // token deposited/earned by LPs.
-
-    address public policy = msg.sender;     // regularly updates RFV, until governance can take over.
-    
-    address public feeTo = msg.sender;      // receives fees if any.
     
     uint256 public constant DIVISOR = 1e6;  // 1,000,000
     
@@ -51,7 +44,17 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     uint256 public mintFee = 4_000;         // 0.04 % - service fee on liquidity providor deposits.
     
     uint256 public totalDebt;               // total amount of sOHM owed back to interest sellers.
+
+    address public policy;     // regularly updates RFV, until governance can take over.
     
+    address public feeTo;      // receives fees if any.
+
+    IStaking public staking;
+
+    ERC20 public sOHM;                      // toke sold at a discount.
+
+    ERC20 public wOHM;                      // token deposited/earned by LPs.
+
     bool public depositFee_active = true;   // if true, loanFee is taken when selling interest.
     
     bool public mintFee_active = true;      // if true, mintFee is taken when depositing liquidity.
@@ -80,6 +83,8 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         sOHM = _sOHM;
         wOHM = _wOHM;
         maxRebases = _maxRebases;
+        policy = msg.sender;
+        feeTo = msg.sender;
     }
 
 
