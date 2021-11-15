@@ -2,17 +2,15 @@
 pragma solidity >=0.8.0;
 
 abstract contract ERC20 {
-    /*///////////////////////////////////////////////////////////////
-                                  EVENTS
-    //////////////////////////////////////////////////////////////*/
+
+    /////////////////////// Events ///////////////////////
 
     event Transfer(address indexed from, address indexed to, uint256 amount);
 
     event Approval(address indexed owner, address indexed spender, uint256 amount);
 
-    /*///////////////////////////////////////////////////////////////
-                             METADATA STORAGE
-    //////////////////////////////////////////////////////////////*/
+
+    ///////////////////////  State  ///////////////////////
 
     string public name;
 
@@ -20,19 +18,14 @@ abstract contract ERC20 {
 
     uint8 public immutable decimals;
 
-    /*///////////////////////////////////////////////////////////////
-                              ERC20 STORAGE
-    //////////////////////////////////////////////////////////////*/
-
     uint256 public totalSupply;
 
     mapping(address => uint256) public balanceOf;
 
     mapping(address => mapping(address => uint256)) public allowance;
 
-    /*///////////////////////////////////////////////////////////////
-                               CONSTRUCTOR
-    //////////////////////////////////////////////////////////////*/
+
+    ///////////////////////  Init  ///////////////////////
 
     constructor(
         string memory _name,
@@ -44,9 +37,8 @@ abstract contract ERC20 {
         decimals = _decimals;
     }
 
-    /*///////////////////////////////////////////////////////////////
-                              ERC20 LOGIC
-    //////////////////////////////////////////////////////////////*/
+
+    ///////////////////////  Public  ///////////////////////
 
     function approve(address spender, uint256 amount) public virtual returns (bool) {
         allowance[msg.sender][spender] = amount;
@@ -92,9 +84,8 @@ abstract contract ERC20 {
         return true;
     }
 
-    /*///////////////////////////////////////////////////////////////
-                       INTERNAL MINT/BURN LOGIC
-    //////////////////////////////////////////////////////////////*/
+
+    ///////////////////////  Private  ///////////////////////
 
     function _mint(address to, uint256 amount) internal virtual {
         totalSupply += amount;
@@ -126,6 +117,18 @@ interface IwOHM {
     function wOHMValue( uint256 _amount ) external view returns (uint256);
 }
 
+interface IStaking {
+    
+    struct Epoch {
+        uint length;
+        uint number;
+        uint endBlock;
+        uint distribute;
+    }
+
+    function epoch() external view returns (Epoch memory);
+}
+
 contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
 
     /////////////////////// Events ///////////////////////
@@ -143,12 +146,15 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
 
     struct Receipt {
         uint256 lockupAmount;               // amount locked, and owed to depositor
-        uint256 releaseTimestamp;           // creation time + 5 days
+        uint256 depositIndex;               // index user deposited
+        uint256 releaseIndex;               // deposit index
         bool paid;                          // if user has withdrawn funds or not
     }
 
 
     ///////////////////////  State  ///////////////////////
+
+    IStaking public staking;
 
     ERC20 public sOHM;                      // toke sold at a discount.
 
@@ -160,23 +166,26 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     
     uint256 public constant DIVISOR = 1e6;  // 1,000,000
     
-    uint256 public RFV_BIPS = 300_000;      // 3.0 %
+    uint256 public maxRebases;              // maximum number of rebases a user can use as principal for a loan.
+
+    uint256 public RFV_CV = 300_000;        // 3.0 % - risk free value control variable.
     
-    uint256 public depositFee_BIPS = 8_000; // 0.08 %
+    uint256 public loanFee = 8_000;         // 0.08 % - service fee on loans.
     
-    uint256 public mintFee_BIPS = 4_000;    // 0.04 %
+    uint256 public mintFee = 4_000;         // 0.04 % - service fee on liquidity providor deposits.
     
     uint256 public totalDebt;               // total amount of sOHM owed back to interest sellers.
     
-    bool public depositFee_active = true;   // if true, depositFee_BIPS is taken when selling interest.
+    bool public depositFee_active = true;   // if true, loanFee is taken when selling interest.
     
-    bool public mintFee_active = true;      // if true, mintFee_BIPS is taken when depositing liquidity.
+    bool public mintFee_active = true;      // if true, mintFee is taken when depositing liquidity.
     
     bool public paused;                     // if lockup and lp deposits are paused.
     
     mapping( address => Receipt[] ) public sellerReceipts;  
 
-    ///////////////////////  Only Policy  ///////////////////////
+
+    ///////////////////////  Modifiers  ///////////////////////
 
     modifier onlyPolicy() {
         require(msg.sender == policy);
@@ -189,12 +198,14 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     }
 
 
-    ///////////////////////  Policy  ///////////////////////
+    ///////////////////////  Init  ///////////////////////
 
-    constructor(ERC20 _sOHM, ERC20 _wOHM) {
+    constructor(ERC20 _sOHM, ERC20 _wOHM, uint256 _maxRebases) {
         sOHM = _sOHM;
         wOHM = _wOHM;
+        maxRebases = _maxRebases;
     }
+
 
     ///////////////////////  Policy  ///////////////////////
 
@@ -204,7 +215,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         uint256 newRFV
     ) external onlyPolicy {
         require(newRFV <= DIVISOR);
-        RFV_BIPS = newRFV;
+        RFV_CV = newRFV;
     }
 
     function set_policy(
@@ -244,10 +255,12 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
      *  Sell the next 5 days of sOHM interest to the pool at a discount.
      *  @param to reciepient of payout.
      *  @param lockupAmount amount to be locked.
+     *  @param epochs amount of rebases to sell to the pool
      */
     function deposit(
         address to,
-        uint256 lockupAmount
+        uint256 lockupAmount,
+        uint256 epochs
     ) external whenNotPaused {
         accrue();
         // interface users receipts
@@ -259,7 +272,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         
         if (depositFee_active) {
             // calculate fee amount
-            uint256 feeAmount = lockupAmount * depositFee_BIPS / DIVISOR;
+            uint256 feeAmount = lockupAmount * loanFee / DIVISOR;
             // transfer policy fee
             sOHM.transfer(feeTo, feeAmount);
             // adjust lockup fee to account for fee
@@ -268,12 +281,15 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         
         // log lockup amount on receipt
         receipt.lockupAmount = lockupAmount;
-        // log release time on receipt
-        receipt.releaseTimestamp = block.timestamp + 5 days;
+        // log deposit index on receipt
+        receipt.depositIndex = staking.epoch().number;
+        // log release index on receipt
+        receipt.releaseIndex = staking.epoch().number + epochs;
+
         // increase total debt
         totalDebt += lockupAmount;
         // determine payout amount
-        uint256 payoutAmount = lockupAmount * RFV_BIPS / DIVISOR;
+        uint256 payoutAmount = lockupAmount * RFV_CV / DIVISOR;
         // transfer payout
         emit Deposit(lockupAmount, payoutAmount);
         wOHM.transfer( to, IwOHM( address( wOHM ) ).wOHMValue( payoutAmount ) );
@@ -291,7 +307,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         // make sure the receipt hasn't already been paid
         require(receipt.paid == false, "already paid");
         // make sure the receipts fully vested
-        require(receipt.releaseTimestamp <= block.timestamp, "not fully vested");
+        require(receipt.depositIndex <= receipt.releaseIndex, "not fully vested");
         // set it as paid
         receipt.paid = true;
         // decrease debt
@@ -312,7 +328,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         
         if (mintFee_active) {
             // calculate fee amount
-            uint256 feeAmount = amount * mintFee_BIPS / DIVISOR;
+            uint256 feeAmount = amount * mintFee / DIVISOR;
             // transfer policy fee
             wOHM.transfer(feeTo, feeAmount);
             // adjust lockup fee to account for fee
