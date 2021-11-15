@@ -5,29 +5,29 @@ pragma solidity =0.8.9;
 import "https://github.com/Rari-Capital/solmate/blob/38b518cf7a66868111bac15f99559108b1e12dba/src/erc20/ERC20.sol";
 
 interface IwOHM {
-    function wrapFromsOHM( uint _amount ) external returns ( uint );
-    function wOHMValue( uint _amount ) external view returns ( uint );
+    function wrapFromsOHM( uint256 _amount ) external returns (uint256);
+    function wOHMValue( uint256 _amount ) external view returns (uint256);
 }
 
 contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
 
     /////////////////////// Events ///////////////////////
 
-    event LiquidityProvided(uint indexed amountIn, uint indexed amountOut);
+    event LiquidityProvided(uint256 indexed amountIn, uint256 indexed amountOut);
     
-    event LiquidityRemoved(uint indexed amountIn, uint indexed amountOut);
+    event LiquidityRemoved(uint256 indexed amountIn, uint256 indexed amountOut);
     
-    event Deposit(uint indexed lockupAmount, uint indexed payoutAmount);
+    event Deposit(uint256 indexed lockupAmount, uint256 indexed payoutAmount);
    
-    event Withdraw(uint indexed lockupAmount);
+    event Withdraw(uint256 indexed lockupAmount);
 
 
     /////////////////////// Structs ///////////////////////
 
     struct Receipt {
-        uint lockupAmount;              // amount locked, and owed to depositor
-        uint releaseTimestamp;          // creation time + 5 days
-        bool paid;                      // if user has withdrawn funds or not
+        uint256 lockupAmount;               // amount locked, and owed to depositor
+        uint256 releaseTimestamp;           // creation time + 5 days
+        bool paid;                          // if user has withdrawn funds or not
     }
 
 
@@ -39,57 +39,72 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
 
     ERC20 public wOHM;                      // token deposited/earned by LPs.
     
-    uint public totalDebt;                  // total amount of sOHM owed back to interest sellers.
+    uint256 public constant DIVISOR = 1e5;  // 100,000
     
-    uint public constant DIVISOR = 1e5;     // 100,000
+    uint256 public RFV_BIPS = 30_000;       // 3.0 %
     
-    uint public RFV_BIPS = 30_000;          // 3.0 %
+    uint256 public depositFee_BIPS = 800;   // 0.08 %
     
-    uint public depositFee_BIPS = 800;      // 0.08 %
+    uint256 public mintFee_BIPS = 400;      // 0.04 %
     
-    uint public mintFee_BIPS = 400;         // 0.04 %
+    uint256 public totalDebt;               // total amount of sOHM owed back to interest sellers.
     
     bool public depositFee_active = true;   // if true, depositFee_BIPS is taken when selling interest.
     
     bool public mintFee_active = true;      // if true, mintFee_BIPS is taken when depositing liquidity.
     
+    bool public paused;                     // if lockup and lp deposits are paused.
+    
     mapping( address => Receipt[] ) public sellerReceipts;  
 
+    ///////////////////////  Only Policy  ///////////////////////
+
+    modifier onlyPolicy() {
+        require(msg.sender == admin);
+        _;
+    }
+    
+    modifier whenNotPaused() {
+        require(!paused, "paused");
+        _;
+    }
 
     ///////////////////////  Policy  ///////////////////////
 
     // set admin, admin only
     function set_Admin(
         address newAdmin
-    ) external {
-        require(msg.sender == admin);
+    ) external onlyPolicy {
         admin = newAdmin;
     }
     
     // set risk free value, admin only
+    // RFV is the value LPs are willing to pay out for future interest
     function set_RFV(
-        uint newRFV
-    ) external {
-        require(msg.sender == admin);
+        uint256 newRFV
+    ) external onlyPolicy {
         require(newRFV <= DIVISOR);
         RFV_BIPS = newRFV;
     }
     
     function set_depositFee_active(
         bool active
-    ) external {
-        require(msg.sender == admin);
+    ) external onlyPolicy {
         depositFee_active = active;
     }
     
     function set_mintFee_active(
         bool active
-    ) external {
-        require(msg.sender == admin);
+    ) external onlyPolicy {
         mintFee_active = active;
     }
-
-    // TODO add pausable
+    
+    function set_paused(
+        bool isPaused
+    ) external onlyPolicy {
+        paused = isPaused;
+    }
+    
 
     /////////////////////// Public ///////////////////////
 
@@ -100,8 +115,8 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
      */
     function deposit(
         address to,
-        uint lockupAmount
-    ) external {
+        uint256 lockupAmount
+    ) external whenNotPaused {
         accrue();
         // interface users receipts
         Receipt[] storage receipts = sellerReceipts[ msg.sender ];
@@ -112,7 +127,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         
         if (depositFee_active) {
             // calculate fee amount
-            uint feeAmount = lockupAmount * depositFee_BIPS / DIVISOR;
+            uint256 feeAmount = lockupAmount * depositFee_BIPS / DIVISOR;
             // transfer admin fee
             sOHM.transfer(admin, feeAmount);
             // adjust lockup fee to account for fee
@@ -126,7 +141,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         // increase total debt
         totalDebt += lockupAmount;
         // determine payout amount
-        uint payoutAmount = lockupAmount * RFV_BIPS / DIVISOR;
+        uint256 payoutAmount = lockupAmount * RFV_BIPS / DIVISOR;
         // transfer payout
         emit Deposit(lockupAmount, payoutAmount);
         wOHM.transfer( to, IwOHM( address( wOHM ) ).wOHMValue( payoutAmount ) );
@@ -134,7 +149,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
 
     // withdraw deposited sOHM after vesting is complete
     function withdraw(
-        uint receiptID,
+        uint256 receiptID,
         address to
     ) external {
         // interface users receipts
@@ -156,20 +171,23 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     }
     
     // provide your wOHM and receive LP tokens
-    function provideLiquidity(address to, uint amount) external returns ( uint ) {
+    function provideLiquidity(
+        address to, 
+        uint256 amount
+    ) external whenNotPaused returns (uint256) {
         accrue();
         wOHM.transferFrom(msg.sender, address( this ), amount);
         
         if (mintFee_active) {
             // calculate fee amount
-            uint feeAmount = amount * mintFee_BIPS / DIVISOR;
+            uint256 feeAmount = amount * mintFee_BIPS / DIVISOR;
             // transfer admin fee
             wOHM.transfer(admin, feeAmount);
             // adjust lockup fee to account for fee
             amount -= feeAmount;
         }
         
-        uint mintAmount = provideLiquidityAmountOut( amount );
+        uint256 mintAmount = provideLiquidityAmountOut( amount );
         emit LiquidityProvided(amount, mintAmount);
         _mint( to,  mintAmount);
         return mintAmount;
@@ -178,11 +196,11 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     // redeem LP tokens for wOHM
     function removeLiquidity(
         address to, 
-        uint amount
-    ) external returns ( uint ) {
+        uint256 amount
+    ) external returns (uint256) {
         accrue();
         require( balanceOf[ msg.sender ] >= amount, "!amount");
-        uint refundAmount = removeLiquidityAmountOut( amount );
+        uint256 refundAmount = removeLiquidityAmountOut( amount );
         emit LiquidityRemoved (amount, refundAmount);
         _burn( msg.sender,  amount);
         wOHM.transfer(to, refundAmount );
@@ -190,7 +208,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     }
     
     // convert earned sOHM to wOHm so it can be claimed by LPs
-    function accrue() public returns ( uint ) {
+    function accrue() public returns (uint256) {
         if ( pendingAccrual() > 0 ) {
             return IwOHM( address( wOHM ) ).wrapFromsOHM( pendingAccrual() );
         } else {
@@ -201,7 +219,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     ///////////////////////  View  ///////////////////////
 
     // amount of sOHM that can currently be accrued
-    function pendingAccrual() public view returns ( uint ) {
+    function pendingAccrual() public view returns (uint256) {
         if ( sOHM.balanceOf( address( this ) ) > totalDebt ) {
             return sOHM.balanceOf( address( this ) ) - totalDebt;
         } else {
@@ -211,16 +229,16 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     
     // calculate amount of LP tokens that should be minted for a deposit amount of wOHM
     function provideLiquidityAmountOut(
-        uint amountIn
-    ) public view returns ( uint ) {
+        uint256 amountIn
+    ) public view returns (uint256) {
         if ( totalSupply == 0 ) return amountIn;
         return amountIn * wOHM.balanceOf( address( this ) ) / totalSupply;
     }
     
     // calculate amount of wOHM that LP tokens can be redeemed for
     function removeLiquidityAmountOut(
-        uint amountIn
-    ) public view returns ( uint ) {
+        uint256 amountIn
+    ) public view returns (uint256) {
         if ( totalSupply == 0 ) return amountIn;
         return amountIn * totalSupply / wOHM.balanceOf( address( this ) );
     }
