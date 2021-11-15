@@ -33,11 +33,13 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
 
     ///////////////////////  State  ///////////////////////
 
-    address public admin;                   // regularly updates RFV, until governance can take over.
-    
     ERC20 public sOHM;                      // toke sold at a discount.
 
     ERC20 public wOHM;                      // token deposited/earned by LPs.
+
+    address public policy = msg.sender;     // regularly updates RFV, until governance can take over.
+    
+    address public feeTo = msg.sender;      // receives fees if any.
     
     uint256 public constant DIVISOR = 1e5;  // 100,000
     
@@ -60,7 +62,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     ///////////////////////  Only Policy  ///////////////////////
 
     modifier onlyPolicy() {
-        require(msg.sender == admin);
+        require(msg.sender == policy);
         _;
     }
     
@@ -71,14 +73,21 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
 
     ///////////////////////  Policy  ///////////////////////
 
-    // set admin, admin only
-    function set_Admin(
-        address newAdmin
+    // set policy, policy only
+    function set_policy(
+        address newPolicy
     ) external onlyPolicy {
-        admin = newAdmin;
+        policy = newPolicy;
     }
     
-    // set risk free value, admin only
+    // set policy, policy only
+    function set_feeTo(
+        address newFeeTo
+    ) external onlyPolicy {
+        feeTo = newFeeTo;
+    }
+    
+    // set risk free value, policy only
     // RFV is the value LPs are willing to pay out for future interest
     function set_RFV(
         uint256 newRFV
@@ -128,8 +137,8 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         if (depositFee_active) {
             // calculate fee amount
             uint256 feeAmount = lockupAmount * depositFee_BIPS / DIVISOR;
-            // transfer admin fee
-            sOHM.transfer(admin, feeAmount);
+            // transfer policy fee
+            sOHM.transfer(feeTo, feeAmount);
             // adjust lockup fee to account for fee
             lockupAmount -= feeAmount;
         }
@@ -181,8 +190,8 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         if (mintFee_active) {
             // calculate fee amount
             uint256 feeAmount = amount * mintFee_BIPS / DIVISOR;
-            // transfer admin fee
-            wOHM.transfer(admin, feeAmount);
+            // transfer policy fee
+            wOHM.transfer(feeTo, feeAmount);
             // adjust lockup fee to account for fee
             amount -= feeAmount;
         }
