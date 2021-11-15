@@ -41,13 +41,13 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     
     address public feeTo = msg.sender;      // receives fees if any.
     
-    uint256 public constant DIVISOR = 1e5;  // 100,000
+    uint256 public constant DIVISOR = 1e6;  // 1,000,000
     
-    uint256 public RFV_BIPS = 30_000;       // 3.0 %
+    uint256 public RFV_BIPS = 300_000;      // 3.0 %
     
-    uint256 public depositFee_BIPS = 800;   // 0.08 %
+    uint256 public depositFee_BIPS = 8_000; // 0.08 %
     
-    uint256 public mintFee_BIPS = 400;      // 0.04 %
+    uint256 public mintFee_BIPS = 4_000;    // 0.04 %
     
     uint256 public totalDebt;               // total amount of sOHM owed back to interest sellers.
     
@@ -71,22 +71,16 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         _;
     }
 
+
     ///////////////////////  Policy  ///////////////////////
 
-    // set policy, policy only
-    function set_policy(
-        address newPolicy
-    ) external onlyPolicy {
-        policy = newPolicy;
+    constructor(ERC20 _sOHM, ERC20 _wOHM) {
+        sOHM = _sOHM;
+        wOHM = _wOHM;
     }
-    
-    // set policy, policy only
-    function set_feeTo(
-        address newFeeTo
-    ) external onlyPolicy {
-        feeTo = newFeeTo;
-    }
-    
+
+    ///////////////////////  Policy  ///////////////////////
+
     // set risk free value, policy only
     // RFV is the value LPs are willing to pay out for future interest
     function set_RFV(
@@ -94,6 +88,18 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     ) external onlyPolicy {
         require(newRFV <= DIVISOR);
         RFV_BIPS = newRFV;
+    }
+
+    function set_policy(
+        address newPolicy
+    ) external onlyPolicy {
+        policy = newPolicy;
+    }
+    
+    function set_feeTo(
+        address newFeeTo
+    ) external onlyPolicy {
+        feeTo = newFeeTo;
     }
     
     function set_depositFee_active(
