@@ -9,7 +9,18 @@ interface IwOHM {
     function wOHMValue( uint _amount ) external view returns ( uint );
 }
 
-contract DegenOHM is ERC20("Low Risk Degen OHM", "LR_dOHM", 18) {
+contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
+
+    /////////////////////// Events ///////////////////////
+
+    event LiquidityProvided(uint indexed amountIn, uint indexed amountOut);
+    
+    event LiquidityRemoved(uint indexed amountIn, uint indexed amountOut);
+    
+    event Deposit(uint indexed lockupAmount, uint indexed payoutAmount);
+   
+    event Withdraw(uint indexed lockupAmount);
+
 
     /////////////////////// Structs ///////////////////////
 
@@ -22,17 +33,25 @@ contract DegenOHM is ERC20("Low Risk Degen OHM", "LR_dOHM", 18) {
 
     ///////////////////////  State  ///////////////////////
 
-    address public admin;               // regularly updates RFV.
+    address public admin;                   // regularly updates RFV, until governance can take over.
     
-    ERC20 public sOHM;                  // toke sold at a discount.
+    ERC20 public sOHM;                      // toke sold at a discount.
 
-    ERC20 public wOHM;                  // token deposited/earned by LPs.
+    ERC20 public wOHM;                      // token deposited/earned by LPs.
     
-    uint public totalDebt;              // total amount of sOHM owed back to interest sellers.
+    uint public totalDebt;                  // total amount of sOHM owed back to interest sellers.
     
-    uint public RFV_BIPS = 3000;        // 3.0 %
-
-    uint public constant DIVISOR = 1e4; // 10,000
+    uint public constant DIVISOR = 1e5;     // 100,000
+    
+    uint public RFV_BIPS = 30_000;          // 3.0 %
+    
+    uint public depositFee_BIPS = 800;      // 0.08 %
+    
+    uint public mintFee_BIPS = 400;         // 0.04 %
+    
+    bool public depositFee_active = true;   // if true, depositFee_BIPS is taken when selling interest.
+    
+    bool public mintFee_active = true;      // if true, mintFee_BIPS is taken when depositing liquidity.
     
     mapping( address => Receipt[] ) public sellerReceipts;  
 
@@ -55,6 +74,20 @@ contract DegenOHM is ERC20("Low Risk Degen OHM", "LR_dOHM", 18) {
         require(newRFV <= DIVISOR);
         RFV_BIPS = newRFV;
     }
+    
+    function set_depositFee_active(
+        bool active
+    ) external {
+        require(msg.sender == admin);
+        depositFee_active = active;
+    }
+    
+    function set_mintFee_active(
+        bool active
+    ) external {
+        require(msg.sender == admin);
+        mintFee_active = active;
+    }
 
     // TODO add pausable
 
@@ -76,6 +109,16 @@ contract DegenOHM is ERC20("Low Risk Degen OHM", "LR_dOHM", 18) {
         Receipt storage receipt = receipts[ receipts.length ];
         // pull users tokens
         sOHM.transferFrom(msg.sender, address(this), lockupAmount);
+        
+        if (depositFee_active) {
+            // calculate fee amount
+            uint feeAmount = lockupAmount * depositFee_BIPS / DIVISOR;
+            // transfer admin fee
+            sOHM.transfer(admin, feeAmount);
+            // adjust lockup fee to account for fee
+            lockupAmount -= feeAmount;
+        }
+        
         // log lockup amount on receipt
         receipt.lockupAmount = lockupAmount;
         // log release time on receipt
@@ -85,6 +128,7 @@ contract DegenOHM is ERC20("Low Risk Degen OHM", "LR_dOHM", 18) {
         // determine payout amount
         uint payoutAmount = lockupAmount * RFV_BIPS / DIVISOR;
         // transfer payout
+        emit Deposit(lockupAmount, payoutAmount);
         wOHM.transfer( to, IwOHM( address( wOHM ) ).wOHMValue( payoutAmount ) );
     }
 
@@ -106,6 +150,7 @@ contract DegenOHM is ERC20("Low Risk Degen OHM", "LR_dOHM", 18) {
         // decrease debt
         totalDebt -= receipt.lockupAmount;
         // return deposited funds
+        emit Withdraw(receipt.lockupAmount);
         sOHM.transfer(to, receipt.lockupAmount);
 
     }
@@ -114,7 +159,18 @@ contract DegenOHM is ERC20("Low Risk Degen OHM", "LR_dOHM", 18) {
     function provideLiquidity(address to, uint amount) external returns ( uint ) {
         accrue();
         wOHM.transferFrom(msg.sender, address( this ), amount);
+        
+        if (mintFee_active) {
+            // calculate fee amount
+            uint feeAmount = amount * mintFee_BIPS / DIVISOR;
+            // transfer admin fee
+            wOHM.transfer(admin, feeAmount);
+            // adjust lockup fee to account for fee
+            amount -= feeAmount;
+        }
+        
         uint mintAmount = provideLiquidityAmountOut( amount );
+        emit LiquidityProvided(amount, mintAmount);
         _mint( to,  mintAmount);
         return mintAmount;
     }
@@ -127,6 +183,7 @@ contract DegenOHM is ERC20("Low Risk Degen OHM", "LR_dOHM", 18) {
         accrue();
         require( balanceOf[ msg.sender ] >= amount, "!amount");
         uint refundAmount = removeLiquidityAmountOut( amount );
+        emit LiquidityRemoved (amount, refundAmount);
         _burn( msg.sender,  amount);
         wOHM.transfer(to, refundAmount );
         return refundAmount;
