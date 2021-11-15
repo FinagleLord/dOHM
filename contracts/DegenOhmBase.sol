@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: WTFPL
-pragma solidity =0.8.9;
+pragma solidity >=0.8.0;
 
 // Rari Capital low gas ERC20
 import "https://github.com/Rari-Capital/solmate/blob/38b518cf7a66868111bac15f99559108b1e12dba/src/erc20/ERC20.sol";
