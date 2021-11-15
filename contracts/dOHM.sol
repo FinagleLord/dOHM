@@ -45,11 +45,11 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     
     uint256 public totalDebt;               // total amount of sOHM owed back to interest sellers.
 
-    address public policy;     // regularly updates RFV, until governance can take over.
+    address public policy;                  // regularly updates RFV, until governance can take over.
     
-    address public feeTo;      // receives fees if any.
+    address public feeTo;                   // receives fees if any.
 
-    IStaking public staking;
+    IStaking public staking;                // Staking contract
 
     ERC20 public sOHM;                      // toke sold at a discount.
 
@@ -149,6 +149,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         uint256 lockupAmount,
         uint256 epochs
     ) external whenNotPaused {
+        require(epochs <= maxRebases, "INPUT");
         accrue();
         // interface users receipts
         Receipt[] storage receipts = sellerReceipts[ msg.sender ];
