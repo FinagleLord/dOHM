@@ -166,7 +166,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     
     uint256 public constant DIVISOR = 1e6;  // 1,000,000
     
-    uint256 public maxRebases;              // maximum number of rebases a user can use as principal for a loan.
+    uint256 public maxRebases = 30;         // maximum number of rebases a user can use as principal for a loan.
 
     uint256 public RFV_CV = 300_000;        // 3.0 % - risk free value control variable.
     
@@ -216,6 +216,12 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     ) external onlyPolicy {
         require(newRFV <= DIVISOR);
         RFV_CV = newRFV;
+    }
+
+    function set_maxRebases(
+        uint256 newMaxRebases
+    ) external onlyPolicy {
+        maxRebases = newMaxRebases;
     }
 
     function set_policy(
