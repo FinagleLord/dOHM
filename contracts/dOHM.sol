@@ -13,11 +13,8 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     /////////////////////// Events ///////////////////////
 
     event LiquidityProvided(uint256 indexed amountIn, uint256 indexed amountOut);
-    
     event LiquidityRemoved(uint256 indexed amountIn, uint256 indexed amountOut);
-    
     event Deposit(uint256 indexed lockupAmount, uint256 indexed payoutAmount);
-   
     event Withdraw(uint256 indexed lockupAmount);
 
 
@@ -30,38 +27,30 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         bool paid;                          // if user has withdrawn funds or not
     }
 
+    mapping( address => Receipt[] ) public loanReceipts;
 
-    ///////////////////////  State  ///////////////////////
-    
-    uint256 public constant DIVISOR = 1e6;  // 1,000,000
-    
-    uint256 public maxRebases = 30;         // maximum number of rebases a user can use as principal for a loan.
+    ///////////////////////  Constants  ///////////////////////
 
-    uint256 public RFV_CV = 300_000;        // 3.0 % - risk free value control variable.
-    
-    uint256 public loanFee = 8_000;         // 0.08 % - service fee on loans.
-    
-    uint256 public mintFee = 4_000;         // 0.04 % - service fee on liquidity providor deposits.
+    ERC20 public immutable sOHM;            // toke sold at a discount.
+
+    ERC20 public immutable wOHM;            // token deposited/earned by LPs.
+
+    IStaking public immutable staking;      // Staking contract
+
+    uint256 public constant DIVISOR = 1e9;  // 1,000,000,000
+
+
+    ///////////////////////  Storage  ///////////////////////  
+
+    uint256 public maxRebases = 36;         // 10 days of rebases - maximum number of rebases a user can use as principal for a loan.
+
+    uint256 public RFV_CV = 333_000_000;    // 33.3 % - risk free value control variable.
     
     uint256 public totalDebt;               // total amount of sOHM owed back to interest sellers.
 
     address public policy;                  // regularly updates RFV, until governance can take over.
     
-    address public feeTo;                   // receives fees if any.
-
-    IStaking public staking;                // Staking contract
-
-    ERC20 public sOHM;                      // toke sold at a discount.
-
-    ERC20 public wOHM;                      // token deposited/earned by LPs.
-
-    bool public depositFee_active = true;   // if true, loanFee is taken when selling interest.
-    
-    bool public mintFee_active = true;      // if true, mintFee is taken when depositing liquidity.
-    
     bool public paused;                     // if lockup and lp deposits are paused.
-    
-    mapping( address => Receipt[] ) public sellerReceipts;  
 
 
     ///////////////////////  Modifiers  ///////////////////////
@@ -72,19 +61,25 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     }
     
     modifier whenNotPaused() {
-        require(!paused, "paused");
+        require(!paused, "PAUSED");
         _;
     }
 
 
     ///////////////////////  Init  ///////////////////////
 
-    constructor(ERC20 _sOHM, ERC20 _wOHM, uint256 _maxRebases) {
+    constructor(
+        ERC20 _sOHM, 
+        ERC20 _wOHM, 
+        IStaking _staking,
+        address _policy,
+        uint256 _maxRebases
+    ) {
         sOHM = _sOHM;
         wOHM = _wOHM;
+        staking = _staking;
+        policy = _policy;
         maxRebases = _maxRebases;
-        policy = msg.sender;
-        feeTo = msg.sender;
     }
 
 
@@ -111,24 +106,6 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         policy = newPolicy;
     }
     
-    function set_feeTo(
-        address newFeeTo
-    ) external onlyPolicy {
-        feeTo = newFeeTo;
-    }
-    
-    function set_depositFee_active(
-        bool active
-    ) external onlyPolicy {
-        depositFee_active = active;
-    }
-    
-    function set_mintFee_active(
-        bool active
-    ) external onlyPolicy {
-        mintFee_active = active;
-    }
-    
     function set_paused(
         bool isPaused
     ) external onlyPolicy {
@@ -144,7 +121,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
      *  @param lockupAmount amount to be locked.
      *  @param epochs amount of rebases to sell to the pool
      */
-    function deposit(
+    function takeLoan(
         address to,
         uint256 lockupAmount,
         uint256 epochs
@@ -152,20 +129,11 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         require(epochs <= maxRebases, "INPUT");
         accrue();
         // interface users receipts
-        Receipt[] storage receipts = sellerReceipts[ msg.sender ];
+        Receipt[] storage receipts = loanReceipts[ msg.sender ];
         // interface next available index
         Receipt storage receipt = receipts[ receipts.length ];
         // pull users tokens
         sOHM.transferFrom(msg.sender, address(this), lockupAmount);
-        
-        if (depositFee_active) {
-            // calculate fee amount
-            uint256 feeAmount = lockupAmount * loanFee / DIVISOR;
-            // transfer policy fee
-            sOHM.transfer(feeTo, feeAmount);
-            // adjust lockup fee to account for fee
-            lockupAmount -= feeAmount;
-        }
         
         // log lockup amount on receipt
         receipt.lockupAmount = lockupAmount;
@@ -184,18 +152,18 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
     }
 
     // withdraw deposited sOHM after vesting is complete
-    function withdraw(
+    function claimCollateral(
         uint256 receiptID,
         address to
     ) external {
         // interface users receipts
-        Receipt[] storage receipts = sellerReceipts[ msg.sender ];
+        Receipt[] storage receipts = loanReceipts[ msg.sender ];
         // interface specific receipt
         Receipt storage receipt = receipts[ receiptID ];
         // make sure the receipt hasn't already been paid
-        require(receipt.paid == false, "already paid");
+        require(receipt.paid == false, "PAID");
         // make sure the receipts fully vested
-        require(receipt.depositIndex <= receipt.releaseIndex, "not fully vested");
+        require(receipt.depositIndex <= receipt.releaseIndex, "NOT VESTED");
         // set it as paid
         receipt.paid = true;
         // decrease debt
@@ -203,7 +171,6 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         // return deposited funds
         emit Withdraw(receipt.lockupAmount);
         sOHM.transfer(to, receipt.lockupAmount);
-
     }
     
     // provide your wOHM and receive LP tokens
@@ -212,17 +179,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         uint256 amount
     ) external whenNotPaused returns (uint256) {
         accrue();
-        wOHM.transferFrom(msg.sender, address( this ), amount);
-        
-        if (mintFee_active) {
-            // calculate fee amount
-            uint256 feeAmount = amount * mintFee / DIVISOR;
-            // transfer policy fee
-            wOHM.transfer(feeTo, feeAmount);
-            // adjust lockup fee to account for fee
-            amount -= feeAmount;
-        }
-        
+        wOHM.transferFrom(msg.sender, address( this ), amount);        
         uint256 mintAmount = provideLiquidityAmountOut( amount );
         emit LiquidityProvided(amount, mintAmount);
         _mint( to,  mintAmount);
@@ -235,7 +192,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         uint256 amount
     ) external returns (uint256) {
         accrue();
-        require( balanceOf[ msg.sender ] >= amount, "!amount");
+        require( balanceOf[ msg.sender ] >= amount, "AMOUNT");
         uint256 refundAmount = removeLiquidityAmountOut( amount );
         emit LiquidityRemoved (amount, refundAmount);
         _burn( msg.sender,  amount);
@@ -268,6 +225,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         uint256 amountIn
     ) public view returns (uint256) {
         if ( totalSupply == 0 ) return amountIn;
+
         return amountIn * wOHM.balanceOf( address( this ) ) / totalSupply;
     }
     
@@ -276,6 +234,7 @@ contract DegenOHM is ERC20("Degen OHM", "dOHM", 18) {
         uint256 amountIn
     ) public view returns (uint256) {
         if ( totalSupply == 0 ) return amountIn;
+        
         return amountIn * totalSupply / wOHM.balanceOf( address( this ) );
     }
 }
